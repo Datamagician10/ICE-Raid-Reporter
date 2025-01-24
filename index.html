@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ICE Raid Reporter</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/@tarekraafat/autocomplete.js@10.2.7/dist/autoComplete.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/@tarekraafat/autocomplete.js@10.2.7/dist/css/autoComplete.min.css">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header>
+        <h1>ICE Raid Reporter</h1>
+    </header>
+
+    <section id="report-form">
+        <h2>Report a Raid</h2>
+        <form id="raid-form">
+            <label for="location">Location:</label>
+            <input type="text" id="location" name="location" placeholder="Enter the address" required>
+
+            <label for="time">Time:</label>
+            <input type="datetime-local" id="time" name="time" required>
+
+            <label for="description">Description:</label>
+            <textarea id="description" name="description" rows="4" placeholder="Provide any details about the raid"></textarea>
+
+            <button type="submit">Submit Report</button>
+        </form>
+    </section>
+
+    <section id="map">
+        <h2>Reported Raids</h2>
+        <div id="map-container" style="width: 100%; height: 500px;"></div>
+    </section>
+
+    <script>
+        // Initialize Leaflet Map
+        const map = L.map('map-container').setView([37.7749, -122.4194], 10); // Default to San Francisco
+
+        // Add OpenStreetMap tiles
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        // Load existing reports from the server
+        fetch('/api/reports')
+            .then(response => response.json())
+            .then(reports => {
+                reports.forEach(report => {
+                    // Add markers for each report
+                    const marker = L.marker([report.lat, report.lng]).addTo(map);
+                    marker.bindPopup(`<strong>${report.time}</strong><br>${report.description}`);
+                });
+            });
+
+        // Autocomplete for address input
+        new autoComplete({
+            selector: "#location",
+            data: {
+                src: async (query) => {
+                    const source = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&addressdetails=1`);
+                    const data = await source.json();
+                    return data.map(entry => entry.display_name);
+                },
+                cache: true
+            },
+            threshold: 3,
+            debounce: 300,
+            resultsList: {
+                element: (list, data) => {
+                    if (!data.results.length) {
+                        const message = document.createElement("div");
+                        message.setAttribute("class", "no_result");
+                        message.innerHTML = `<span>No results found for "${data.query}"</span>`;
+                        list.appendChild(message);
+                    }
+                },
+                noResults: true,
+            },
+            resultItem: {
+                highlight: true
+            },
+            onSelection: (feedback) => {
+                document.querySelector("#location").value = feedback.selection.value;
+            }
+        });
+
+        // Handle form submission
+        document.getElementById('raid-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const location = document.getElementById('location').value;
+            const time = document.getElementById('time').value;
+            const description = document.getElementById('description').value;
+
+            let lat, lng;
+
+            try {
+                // Attempt geocoding with Nominatim
+                let geocodeResponse = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(location)}&addressdetails=1`);
+                let geocodeData = await geocodeResponse.json();
+
+                if (geocodeData.length > 0) {
+                    lat = parseFloat(geocodeData[0].lat);
+                    lng = parseFloat(geocodeData[0].lon);
+                } else {
+                    alert('Unable to locate the address. Please refine your input.');
+                    return;
+                }
+
+                // Send the report to the backend
+                const response = await fetch('/api/reports', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ lat, lng, time, description })
+                });
+
+                if (response.ok) {
+                    alert('Report submitted successfully!');
+                    location.reload(); // Reload the map to show the new marker
+                } else {
+                    alert('Failed to submit the report.');
+                }
+            } catch (error) {
+                console.error('Error during geocoding or report submission:', error);
+                alert('An error occurred. Please try again.');
+            }
+        });
+    </script>
+</body>
+</html>
